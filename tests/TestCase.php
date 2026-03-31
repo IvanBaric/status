@@ -8,36 +8,33 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 use IvanBaric\Status\Models\Status;
 use IvanBaric\Status\Models\StatusHistory;
-use IvanBaric\Status\StatusServiceProvider;
+use IvanBaric\Status\Models\StatusTransition;
 use IvanBaric\Status\Tests\Fixtures\Models\Order;
 use IvanBaric\Status\Tests\Fixtures\Models\Post;
-use Orchestra\Testbench\TestCase as Orchestra;
+use Tests\TestCase as LaravelTestCase;
 
-abstract class TestCase extends Orchestra
+abstract class TestCase extends LaravelTestCase
 {
-    protected function getPackageProviders($app): array
-    {
-        return [
-            StatusServiceProvider::class,
-        ];
-    }
-
-    protected function defineEnvironment($app): void
-    {
-        $app['config']->set('database.default', 'testing');
-        $app['config']->set('database.connections.testing', [
-            'driver' => 'sqlite',
-            'database' => ':memory:',
-            'prefix' => '',
-        ]);
-    }
-
     protected function setUp(): void
     {
         parent::setUp();
 
+        config([
+            'database.default' => 'testing',
+            'database.connections.testing' => [
+                'driver' => 'sqlite',
+                'database' => ':memory:',
+                'prefix' => '',
+                'foreign_key_constraints' => true,
+            ],
+            'cache.default' => 'array',
+            'session.driver' => 'array',
+            'queue.default' => 'sync',
+        ]);
+
         Status::clearBootedModels();
         StatusHistory::clearBootedModels();
+        StatusTransition::clearBootedModels();
         Order::clearBootedModels();
         Post::clearBootedModels();
 
@@ -46,6 +43,7 @@ abstract class TestCase extends Orchestra
 
     protected function createBaseSchema(): void
     {
+        Schema::dropIfExists('status_transitions');
         Schema::dropIfExists('status_history');
         Schema::dropIfExists('statusables');
         Schema::dropIfExists('statuses');
@@ -95,37 +93,42 @@ abstract class TestCase extends Orchestra
 
         Schema::create('statusables', function (Blueprint $table): void {
             $table->id();
-            $table->foreignId('status_id')->constrained('statuses')->cascadeOnDelete();
             $table->morphs('statusable');
+            $table->foreignId('status_id')->constrained('statuses')->cascadeOnDelete();
             $table->timestamps();
-            $table->unique(
-                ['statusable_type', 'statusable_id'],
-                'statusables_unique_current_status'
-            );
-            $table->index('status_id', 'statusables_status_id_index');
+            $table->unique(['statusable_type', 'statusable_id', 'status_id']);
+            $table->index('status_id');
         });
 
         Schema::create('status_history', function (Blueprint $table): void {
             $table->id();
             $table->uuid('uuid')->unique();
-            $table->string('status_type');
             $table->morphs('statusable');
             $table->foreignId('from_status_id')->nullable()->constrained('statuses')->nullOnDelete();
-            $table->string('from_status_key')->nullable();
             $table->foreignId('to_status_id')->nullable()->constrained('statuses')->nullOnDelete();
-            $table->string('to_status_key')->nullable();
-            $table->unsignedBigInteger('changed_by_user_id')->nullable();
+            $table->foreignId('changed_by_user_id')->nullable()->constrained('users')->nullOnDelete();
             $table->string('source')->default('manual');
             $table->text('reason')->nullable();
             $table->json('meta')->nullable();
             $table->timestamp('changed_at');
             $table->timestamps();
-            $table->index(['statusable_type', 'statusable_id'], 'status_history_statusable_index');
-            $table->index('status_type');
             $table->index('from_status_id');
             $table->index('to_status_id');
             $table->index('changed_by_user_id');
             $table->index('changed_at');
+        });
+
+        Schema::create('status_transitions', function (Blueprint $table): void {
+            $table->id();
+            $table->uuid('uuid')->unique();
+            $table->foreignId('from_status_id')->constrained('statuses')->cascadeOnDelete();
+            $table->foreignId('to_status_id')->constrained('statuses')->cascadeOnDelete();
+            $table->boolean('is_active')->default(true);
+            $table->string('label')->nullable();
+            $table->text('description')->nullable();
+            $table->json('meta')->nullable();
+            $table->timestamps();
+            $table->unique(['from_status_id', 'to_status_id']);
         });
     }
 }

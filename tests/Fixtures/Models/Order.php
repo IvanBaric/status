@@ -16,4 +16,9 @@ class Order extends Model
     protected $fillable = [
         'number',
     ];
+
+    protected function statusType(): string
+    {
+        return 'order';
+    }
 }

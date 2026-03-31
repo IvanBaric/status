@@ -12,15 +12,11 @@ return new class extends Migration
     {
         Schema::create('statusables', function (Blueprint $table): void {
             $table->id();
-            $table->foreignId('status_id')->constrained('statuses')->cascadeOnDelete();
             $table->morphs('statusable');
+            $table->foreignId('status_id')->constrained('statuses')->cascadeOnDelete();
             $table->timestamps();
-
-            $table->unique(
-                ['statusable_type', 'statusable_id'],
-                'statusables_unique_current_status'
-            );
-            $table->index('status_id', 'statusables_status_id_index');
+            $table->unique(['statusable_type', 'statusable_id', 'status_id']);
+            $table->index('status_id');
         });
     }
 

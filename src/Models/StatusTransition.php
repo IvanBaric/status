@@ -6,23 +6,21 @@ namespace IvanBaric\Status\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\MorphTo;
-use Illuminate\Foundation\Auth\User;
+use Illuminate\Support\Str;
 use IvanBaric\Status\Support\StatusModels;
 
-class StatusHistory extends Model
+class StatusTransition extends Model
 {
-    protected $table = 'status_history';
+    protected $table = 'status_transitions';
 
     protected $fillable = [
         'uuid',
         'from_status_id',
         'to_status_id',
-        'changed_by_user_id',
-        'source',
-        'reason',
+        'is_active',
+        'label',
+        'description',
         'meta',
-        'changed_at',
     ];
 
     protected function casts(): array
@@ -30,15 +28,16 @@ class StatusHistory extends Model
         return [
             'from_status_id' => 'int',
             'to_status_id' => 'int',
-            'changed_by_user_id' => 'int',
+            'is_active' => 'bool',
             'meta' => 'array',
-            'changed_at' => 'datetime',
         ];
     }
 
-    public function statusable(): MorphTo
+    protected static function booted(): void
     {
-        return $this->morphTo();
+        static::creating(static function (self $transition): void {
+            $transition->uuid ??= (string) Str::uuid();
+        });
     }
 
     public function fromStatus(): BelongsTo
@@ -49,10 +48,5 @@ class StatusHistory extends Model
     public function toStatus(): BelongsTo
     {
         return $this->belongsTo(StatusModels::status(), 'to_status_id');
-    }
-
-    public function changedBy(): BelongsTo
-    {
-        return $this->belongsTo(User::class, 'changed_by_user_id');
     }
 }

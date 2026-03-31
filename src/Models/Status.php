@@ -8,8 +8,8 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Str;
 use InvalidArgumentException;
 use IvanBaric\Status\Support\StatusModels;
 
@@ -54,6 +54,16 @@ class Status extends Model
         return $this->hasMany(StatusModels::statusHistory(), 'to_status_id');
     }
 
+    public function transitionsFrom(): HasMany
+    {
+        return $this->hasMany(StatusModels::statusTransition(), 'from_status_id');
+    }
+
+    public function transitionsTo(): HasMany
+    {
+        return $this->hasMany(StatusModels::statusTransition(), 'to_status_id');
+    }
+
     public function scopeForType(Builder $query, string $type): Builder
     {
         return $query->where('type', $type);
@@ -69,96 +79,99 @@ class Status extends Model
         return $query->orderBy('sort_order')->orderBy('name');
     }
 
-    public function isActive(): bool
-    {
-        return $this->is_active;
-    }
-
     public function isFinal(): bool
     {
         return $this->is_final;
     }
 
-    /**
-     * @param array<int|string, array<string, mixed>> $definitions
-     * @return Collection<int, static>
-     */
-    public static function syncType(string $type, array $definitions): Collection
+    public function isDefault(): bool
     {
-        $statuses = [];
-
-        foreach (static::normalizeDefinitions($type, $definitions) as $attributes) {
-            $status = static::query()->firstOrNew([
-                'type' => $type,
-                'key' => $attributes['key'],
-            ]);
-
-            $status->fill($attributes);
-            $status->uuid ??= (string) Str::uuid();
-            $status->save();
-
-            $statuses[] = $status->fresh() ?? $status;
-        }
-
-        /** @var Collection<int, static> */
-        return new Collection($statuses);
+        return $this->is_default;
     }
 
-    /**
-     * @return Collection<int, static>
-     */
+    public function isActive(): bool
+    {
+        return $this->is_active;
+    }
+
+    public function badge(): array
+    {
+        return [
+            'label' => $this->name,
+            'tooltip' => $this->tooltip,
+            'color' => $this->color,
+            'icon' => $this->icon,
+        ];
+    }
+
     public static function getStatuses(string $type): Collection
     {
         $rows = static::getCachedRows($type);
 
-        $models = array_map(static function (array $attributes): self {
+        return new Collection(array_map(static function (array $attributes): self {
             $model = new static();
             $model->setRawAttributes($attributes, true);
             $model->exists = true;
 
             return $model;
-        }, $rows);
-
-        /** @var Collection<int, static> */
-        return new Collection($models);
+        }, $rows));
     }
 
-    /**
-     * @return list<string>
-     */
     public static function keysFor(string $type): array
     {
         /** @var list<string> $keys */
         $keys = Cache::remember(
             static::cacheKey($type, 'keys'),
             now()->addSeconds(StatusModels::cacheTtl()),
-            fn (): array => static::getStatuses($type)
-                ->pluck('key')
-                ->all(),
+            fn (): array => static::getStatuses($type)->pluck('key')->all(),
         );
 
         return $keys;
     }
 
-    public static function findByKeyCached(string $type, string $key): ?static
+    public static function defaultFor(string $type): ?self
+    {
+        /** @var ?self */
+        return static::getStatuses($type)->firstWhere('is_default', true);
+    }
+
+    public static function findByKey(string $type, string $key): self
+    {
+        /** @var ?self $status */
+        $status = static::query()->forType($type)->where('key', $key)->first();
+
+        if ($status instanceof self) {
+            return $status;
+        }
+
+        throw new InvalidArgumentException("Status [{$type}:{$key}] not found.");
+    }
+
+    public static function findByKeyCached(string $type, string $key): ?self
     {
         /** @var array<string, int> $map */
         $map = Cache::remember(
             static::cacheKey($type, 'active'),
             now()->addSeconds(StatusModels::cacheTtl()),
             fn (): array => collect(static::getCachedRows($type))
-                ->mapWithKeys(static fn (array $row): array => [(string) ($row['key'] ?? '') => (int) ($row['id'] ?? 0)])
-                ->filter(static fn (int $id, string $k): bool => $k !== '' && $id > 0)
+                ->mapWithKeys(static fn (array $row): array => [(string) $row['key'] => (int) $row['id']])
                 ->all(),
         );
 
         $id = $map[$key] ?? null;
-        if (! is_int($id) || $id <= 0) {
-            return null;
+
+        return is_int($id) && $id > 0 ? static::query()->whereKey($id)->first() : null;
+    }
+
+    public static function clearCache(?string $type = null): void
+    {
+        if (is_string($type) && $type !== '') {
+            static::flushTypeCache($type);
+
+            return;
         }
 
-        /** @var ?static */
-        return static::query()->whereKey($id)->first();
+        static::query()->distinct()->pluck('type')->each(static fn (string $knownType): bool => static::flushTypeCache($knownType) || true);
     }
 
     protected static function cacheKey(string $type, string $suffix): string
@@ -166,63 +179,13 @@ class Status extends Model
         return "statuses.{$type}.{$suffix}";
     }
 
-    /**
-     * @param array<int|string, array<string, mixed>> $definitions
-     * @return list<array<string, mixed>>
-     */
-    protected static function normalizeDefinitions(string $type, array $definitions): array
-    {
-        $normalized = [];
-
-        foreach ($definitions as $definitionKey => $definition) {
-            if (! is_array($definition)) {
-                throw new InvalidArgumentException('Each status definition must be an array.');
-            }
-
-            if (array_key_exists('type', $definition) && (string) $definition['type'] !== $type) {
-                throw new InvalidArgumentException("Status definition type must match [{$type}].");
-            }
-
-            $key = is_string($definitionKey)
-                ? trim($definitionKey)
-                : trim((string) ($definition['key'] ?? ''));
-
-            if ($key === '') {
-                throw new InvalidArgumentException('Each status definition must have a non-empty key.');
-            }
-
-            if (array_key_exists('key', $definition) && trim((string) $definition['key']) !== $key) {
-                throw new InvalidArgumentException("Status definition key [{$definition['key']}] does not match [{$key}].");
-            }
-
-            $attributes = $definition;
-            unset($attributes['id']);
-
-            $normalized[] = array_merge($attributes, [
-                'type' => $type,
-                'key' => $key,
-            ]);
-        }
-
-        return $normalized;
-    }
-
-    /**
-     * Cache-safe representation (no model serialization).
-     *
-     * @return list<array<string, mixed>>
-     */
     protected static function getCachedRows(string $type): array
     {
         /** @var list<array<string, mixed>> $rows */
         $rows = Cache::remember(
             static::cacheKey($type, 'list'),
             now()->addSeconds(StatusModels::cacheTtl()),
-            fn (): array => static::query()
-                ->forType($type)
-                ->active()
-                ->ordered()
-                ->get()
+            fn (): array => static::query()->forType($type)->active()->ordered()->get()
                 ->map(static fn (self $status): array => $status->getAttributes())
                 ->values()
                 ->all(),
@@ -234,27 +197,25 @@ class Status extends Model
     protected static function booted(): void
     {
         $flush = static function (self $status): void {
-            $types = [];
-
-            foreach ([$status->type, $status->getOriginal('type')] as $type) {
-                if (is_string($type) && $type !== '' && ! in_array($type, $types, true)) {
-                    $types[] = $type;
-                }
-            }
-
-            foreach ($types as $type) {
-                static::flushTypeCache($type);
+            foreach (array_filter([$status->type, $status->getOriginal('type')]) as $type) {
+                static::flushTypeCache((string) $type);
             }
         };
+
+        static::creating(static function (self $status): void {
+            $status->uuid ??= (string) Str::uuid();
+        });
 
         static::saved($flush);
         static::deleted($flush);
     }
 
-    protected static function flushTypeCache(string $type): void
+    protected static function flushTypeCache(string $type): bool
     {
         Cache::forget(static::cacheKey($type, 'list'));
         Cache::forget(static::cacheKey($type, 'keys'));
         Cache::forget(static::cacheKey($type, 'active'));
+
+        return true;
     }
 }

@@ -3,42 +3,28 @@
 declare(strict_types=1);
 
 return [
-    /*
-    |--------------------------------------------------------------------------
-    | Model overrides
-    |--------------------------------------------------------------------------
-    |
-    | Extend the package models in your application if you need extra traits,
-    | relations or custom behavior, then point the config entries below to
-    | those subclasses. Package internals always resolve models through here.
-    |
-    */
     'models' => [
         'status' => IvanBaric\Status\Models\Status::class,
         'status_history' => IvanBaric\Status\Models\StatusHistory::class,
+        'status_transition' => IvanBaric\Status\Models\StatusTransition::class,
     ],
-
-    /*
-    |--------------------------------------------------------------------------
-    | Status history
-    |--------------------------------------------------------------------------
-    |
-    | Disable this if you only need the current status and do not want the
-    | package to record transition history rows on setStatus() / clearStatus().
-    |
-    */
-    'history' => [
-        'enabled' => true,
-    ],
-
-    /*
-    |--------------------------------------------------------------------------
-    | Cache TTL
-    |--------------------------------------------------------------------------
-    |
-    | Active status lists, key lists and keyed lookups are cached per status
-    | type for this many seconds.
-    |
-    */
     'cache_ttl' => 3600,
+    'history_enabled' => true,
+    'transitions_enabled' => true,
+    'events_enabled' => true,
+    'strict_mode' => true,
+    'actor_resolver' => IvanBaric\Status\Support\Actors\AuthStatusActorResolver::class,
+    'result_messages' => [
+        'same_status' => 'Status is already assigned.',
+        'final_status' => 'Final status cannot be changed.',
+        'clear_final_status' => 'Final status cannot be cleared.',
+        'inactive_status' => 'Selected status is inactive.',
+        'invalid_status_type' => 'Selected status does not belong to this model type.',
+        'invalid_transition' => 'Transition to the selected status is not allowed.',
+        'guard_failed' => 'Transition guard denied this status change.',
+        'status_cleared' => 'Status cleared successfully.',
+        'status_updated' => 'Status updated successfully.',
+        'status_missing' => 'Status could not be resolved.',
+        'persisted_model_required' => 'Status operations require a persisted model instance.',
+    ],
 ];

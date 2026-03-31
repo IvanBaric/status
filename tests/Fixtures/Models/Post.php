@@ -17,7 +17,7 @@ class Post extends Model
         'title',
     ];
 
-    public function statusType(): string
+    protected function statusType(): string
     {
         return 'blog';
     }
